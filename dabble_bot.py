@@ -23,19 +23,19 @@ except:
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 wsample = []
-with open(path / 'word_sample.txt', 'r') as file:
+with open(path / 'curated_data/word_sample.txt', 'r') as file:
   for line in file.read().splitlines():
     wsample.append(line)
 
 # load vocab excl rare words
 trim_vocab = []
-with open(path / 'trim_vocab.txt', 'r') as file:
+with open(path / 'curated_data/trim_vocab.txt', 'r') as file:
   for line in file.read().splitlines():
     trim_vocab.append(line)
 
 # load definitions excl those that include rare words
 more_trim_defs = []
-with open(path / 'more_trim_defs.txt', 'r') as file:
+with open(path / 'curated_data/more_trim_defs.txt', 'r') as file:
   for line in file.read().splitlines():
     more_trim_defs.append(line)
 
@@ -247,7 +247,7 @@ class DabbleBot(nn.Module):
         return out
 
 
-    def generate(self, samples, idx = [[stoi[start_char]]]):    # idx is (B, T) array of indices in the current context
+    def generate(self, samples, idx = torch.tensor([[stoi[start_char]]], device=device)):  # idx is (B, T) array of indices in the current context
         """
         Generate text from the model
 
