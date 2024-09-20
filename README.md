@@ -12,7 +12,7 @@ import dabble_bot as dbb
 # load model state
 model = dbb.DabbleBot(dbb.wsample)
 model.to(dbb.device)
-model.load_state_dict(torch.load(path / 'model_back_ups/dabble_weights', weights_only=True))
+model.load_state_dict(torch.load(path / 'model_backups/dabble_weights', weights_only=True))
 
 # generate samples
 model.generate(samples=10)
