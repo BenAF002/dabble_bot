@@ -17,3 +17,6 @@ model.load_state_dict(torch.load(path / 'model_back_ups/dabble_bot_weights', wei
 # generate samples
 model.generate(samples=10)
 ```
+Note that you will need the curated data in the `curated_data` folder to generate samples from the model. This is because the model initializes encoding/decoding logic from these datasets, even when fine-tuning it on other datasets.
+
+This is/was an educational exercise in deep learning, not functional coding, so it's not grade A code.
