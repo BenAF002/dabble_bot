@@ -10,7 +10,7 @@ Sample definitions may be drawn from the model as follows:
 import dabble_bot as dbb
 
 # load model state
-model = dbb.DabbleBot(dbb.wsample)
+model = dbb.DabbleBot()
 model.to(dbb.device)
 model.load_state_dict(torch.load(path / 'model_backups/dabble_weights', weights_only=True))
 
