@@ -22,37 +22,6 @@ except:
 # global vars
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-wsample = []
-with open(path / 'curated_data/word_sample.txt', 'r') as file:
-  for line in file.read().splitlines():
-    wsample.append(line)
-
-# load vocab excl rare words
-trim_vocab = []
-with open(path / 'curated_data/trim_vocab.txt', 'r') as file:
-  for line in file.read().splitlines():
-    trim_vocab.append(line)
-
-# load definitions excl those that include rare words
-more_trim_defs = []
-with open(path / 'curated_data/more_trim_defs.txt', 'r') as file:
-  for line in file.read().splitlines():
-    more_trim_defs.append(line)
-
-end_char = '.'
-start_char = '<s>'
-pad_char = '<p>'
-
-stoi = {s:i+1 for i,s in enumerate(trim_vocab)}    # word-to-integer mapping dictionary
-stoi[end_char] = len(stoi) + 1                     # adding end character
-stoi[start_char] = len(stoi) + 2                   # adding start character
-stoi[pad_char] = 0                                 # adding pad character
-itos = {i:s for s,i in stoi.items()}               # integer-to-word mapping dictionary
-
-vocab_size = len(stoi) + 1
-encoder = lambda s: [stoi[c] for c in s]            # encoder
-decoder = lambda l: ' '.join([itos[i] for i in l])  # decoder
-
 
 class Head(nn.Module):
     def __init__(self, n_emb, head_size, dropout, block_size):
@@ -80,6 +49,7 @@ class Head(nn.Module):
         out = weights @ v
         return out
 
+
 class MultiHead(nn.Module):
     def __init__(self, n_emb, n_heads, head_size, dropout, block_size):
         super().__init__()
@@ -105,6 +75,7 @@ class FeedForward(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+
 class Block(nn.Module):
     def __init__(self, n_emb, n_heads, dropout, block_size):
         super().__init__()
@@ -124,12 +95,12 @@ class Block(nn.Module):
 
 class DabbleBot(nn.Module):
     def __init__(self,
-                 words: list,
+                 data: list = None,
                  batch_size: int = 128,
                  n_emb: int = 256,
                  n_heads: int = 8,
                  n_blocks: int = 8,
-                 dropout: float = 0.2
+                 dropout: float = 0.2,
     ):
         """
         DabbleBot nlp model
@@ -143,8 +114,21 @@ class DabbleBot(nn.Module):
             dropout (float, optional): dropout rate. Defaults to 0.2.
         """
         # input data
-        self.words = words
-        self.Xt, self.Yt, self.Xv, self.Yv = self.preprocess()
+        if data == None: 
+            wsample = []
+            with open(path / 'curated_data/word_sample.txt', 'r') as file:
+                for line in file.read().splitlines():
+                    wsample.append(line)
+            self.preprocess(wsample)
+        else:
+            # load vocab excl rare words
+            trim_vocab = []
+            with open(path / 'curated_data/trim_vocab.txt', 'r') as file:
+                for line in file.read().splitlines():
+                    trim_vocab.append(line)
+            self.vocab_dict(trim_vocab)
+            self.max_length = 70
+            self.Xt, self.Yt, self.Xv, self.Yv = data
 
         # loss tracking
         self.tloss, self.vloss = [], []
@@ -159,51 +143,68 @@ class DabbleBot(nn.Module):
 
         # functional modules
         super().__init__()
-        self.token_embedding_table = nn.Embedding(vocab_size, n_emb)      # token embedding
+        self.token_embedding_table = nn.Embedding(self.vocab_size, n_emb)      # token embedding
         self.position_embedding_table = nn.Embedding(self.block_size, n_emb)   # positional embedding
         self.blocks = nn.Sequential(*[Block(n_emb, n_heads, dropout, self.block_size) for b in range(n_blocks)])
         self.ln_f = nn.LayerNorm(n_emb)                # final layer norm
-        self.lm_head = nn.Linear(n_emb, vocab_size)    # output linear layer
+        self.lm_head = nn.Linear(n_emb, self.vocab_size)    # output linear layer
 
 
-    def preprocess(self):
-      """
-      Preprocess the words to be used in the model
-      """
-      words = self.words
-      definitions = [s.definition() for w in words for s in wn.synsets(w)]
-      trim_definitions = [''.join(d).translate(str.maketrans('', '', string.punctuation)) + ' . ' for d in definitions]
-      trim_defstring = ''.join(trim_definitions)
-      vocab = list(set(sorted(trim_defstring.split())))
+    def vocab_dict(self, vocab):
+        self.end_char = '.'
+        self.start_char = '<s>'
+        self.pad_char = '<p>'
 
-      # remove rare words
-      counts = [trim_defstring.count(word) for word in vocab]
-      rare_words = {vocab[i] for i,c in enumerate(counts) if c < 2}
-      more_trim_defs= [d for d in trim_definitions if len(set(d.split()) & rare_words) == 0]
+        self.stoi = {s:i+1 for i,s in enumerate(vocab)}         # word-to-integer mapping dictionary
+        self.stoi[self.end_char] = len(self.stoi) + 1           # adding end character
+        self.stoi[self.start_char] = len(self.stoi) + 2         # adding start character
+        self.stoi[self.pad_char] = 0                            # adding pad character
+        self.itos = {i:s for s,i in self.stoi.items()}          # integer-to-word mapping dictionary
 
-      data = [encoder(d.split()) for d in more_trim_defs]
-      self.max_length = max([len(d) for d in data])
-      xdat = [encoder([start_char]) + d[:-1] for d in data]
-      ydat = [d for d in data]
+        self.vocab_size = len(self.stoi) + 1
+        self.encoder = lambda s: [self.stoi[c] for c in s]            # encoder
+        self.decoder = lambda l: ' '.join([self.itos[i] for i in l])  # decoder
 
-      # right pad all definitions to max length
-      for d in xdat: d += [0] * (self.max_length - len(d) + 1)
-      for d in ydat: d += [0] * (self.max_length - len(d) + 1)
-      xdat = torch.tensor(xdat)
-      ydat = torch.tensor(ydat)
 
-      # produce training and valdation data
-      n = int(0.8*len(data))
-      Xt, Yt = xdat[:n], ydat[:n]  # 80% training data
-      Xv, Yv = xdat[n:], ydat[n:]  # 20% validation data
+    # data preprocessing for new wordsets
+    def preprocess(self, words):
+        """
+        Preprocess the words to be used in the model
+        """
+        words = words
+        definitions = [s.definition() for w in words for s in wn.synsets(w)]
+        trim_definitions = [''.join(d).translate(str.maketrans('', '', string.punctuation)) + ' . ' for d in definitions]
+        trim_defstring = ''.join(trim_definitions)
+        vocab = list(set(sorted(trim_defstring.split())))
 
-      return Xt, Yt, Xv, Yv
+        # remove rare words
+        counts = [trim_defstring.count(word) for word in vocab]
+        rare_words = {vocab[i] for i,c in enumerate(counts) if c < 2}
+        more_trim_defs= [d for d in trim_definitions if len(set(d.split()) & rare_words) == 0]
+        trim_vocab = list(set(vocab)) - rare_words
+        self.vocab_dict(trim_vocab)
+
+        data = [self.encoder(d.split()) for d in more_trim_defs]
+        xdat = [self.encoder(['<s>']) + d[:-1] for d in data]
+        ydat = [d for d in data]
+
+        # right pad all definitions to max length
+        for d in xdat: d += [0] * (self.max_length - len(d) + 1)
+        for d in ydat: d += [0] * (self.max_length - len(d) + 1)
+        xdat = torch.tensor(xdat)
+        ydat = torch.tensor(ydat)
+
+        # produce training and valdation data
+        n = int(0.8*len(data))
+        self.Xt, self.Yt = xdat[:n], ydat[:n]  # 80% training data
+        self.Xv, self.Yv = xdat[n:], ydat[n:]  # 20% validation data
+        self.max_length = max([len(d) for d in [self.encoder(d.split()) for d in more_trim_defs]])
 
 
     def _minibatch(self, xdat, ydat):
-      idx = torch.randint(len(xdat) - self.block_size, (self.batch_size,))  # 1D tensor of random ints
-      x, y = xdat[idx], ydat[idx]  # index into x and y tensors using random ints
-      return x.to(device), y.to(device)
+        idx = torch.randint(len(xdat) - self.block_size, (self.batch_size,))  # 1D tensor of random ints
+        x, y = xdat[idx], ydat[idx]  # index into x and y tensors using random ints
+        return x.to(device), y.to(device)
 
 
     def forward(self, input, targets = None):
@@ -247,7 +248,7 @@ class DabbleBot(nn.Module):
         return out
 
 
-    def generate(self, samples, idx = torch.tensor([[stoi[start_char]]], device=device)):  # idx is (B, T) array of indices in the current context
+    def generate(self, samples):  
         """
         Generate text from the model
 
@@ -257,6 +258,9 @@ class DabbleBot(nn.Module):
         """
         self.eval()
         sample = []
+        
+        # idx is (B, T) array of indices in the current context
+        idx = torch.tensor([[self.stoi[self.start_char]]], device=device)
 
         for s in range(samples):
             ctx = idx
@@ -274,9 +278,9 @@ class DabbleBot(nn.Module):
                 # append sampled index to the running sequence
                 ctx = torch.cat((ctx, ctx_next), dim=1) # (B, T+1)
 
-                if ctx_next.item() == stoi[end_char] or ctx.shape[1] > 50:
+                if ctx_next.item() == self.stoi[self.end_char] or ctx.shape[1] > 50:
                     break
-            sample.append(decoder(ctx.tolist()[0]))
+            sample.append(self.decoder(ctx.tolist()[0]))
 
         self.train()
 
